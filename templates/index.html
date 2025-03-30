@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Nifty & BankNifty Data</title>
+    <meta http-equiv="refresh" content="300"> <!-- Refreshes every 5 minutes -->
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
+        table { margin: 20px auto; border-collapse: collapse; }
+        th, td { padding: 10px; border: 1px solid #ddd; }
+        th { background-color: #f2f2f2; }
+        h2 { margin-top: 30px; }
+    </style>
+</head>
+<body>
+    <h1>Live Market Data</h1>
+    {% if data.error %}
+        <p>Error: {{ data.error }}</p>
+    {% else %}
+        <!-- Indices Data -->
+        <h2>Indices</h2>
+        <table>
+            <tr>
+                <th>Index</th>
+                <th>Last Price</th>
+                <th>Timestamp</th>
+            </tr>
+            <tr>
+                <td>Nifty 50</td>
+                <td>{{ data.nifty.last_price }}</td>
+                <td>{{ data.nifty.timestamp }}</td>
+            </tr>
+            <tr>
+                <td>BankNifty</td>
+                <td>{{ data.banknifty.last_price }}</td>
+                <td>{{ data.banknifty.timestamp }}</td>
+            </tr>
+            <tr>
+                <td>India VIX</td>
+                <td>{{ data.india_vix.last_price }}</td>
+                <td>{{ data.india_vix.timestamp }}</td>
+            </tr>
+        </table>
+
+        <!-- ATM Options OI Data -->
+        <h2>ATM Options Open Interest (OI)</h2>
+        <table>
+            <tr>
+                <th>Instrument</th>
+                <th>Call OI</th>
+                <th>Put OI</th>
+            </tr>
+            <tr>
+                <td>Nifty</td>
+                <td>{{ data.options.nifty_call if data.options.nifty_call else 'N/A' }}</td>
+                <td>{{ data.options.nifty_put if data.options.nifty_put else 'N/A' }}</td>
+            </tr>
+            <tr>
+                <td>BankNifty</td>
+                <td>{{ data.options.banknifty_call if data.options.banknifty_call else 'N/A' }}</td>
+                <td>{{ data.options.banknifty_put if data.options.banknifty_put else 'N/A' }}</td>
+            </tr>
+        </table>
+
+        <!-- Nifty Option Chain -->
+        <h2>Nifty Option Chain (20000 - 25000)</h2>
+        <table>
+            <tr>
+                <th>Strike</th>
+                <th>Call OI</th>
+                <th>Call LTP</th>
+                <th>Call % Change</th>
+                <th>Put OI</th>
+                <th>Put LTP</th>
+                <th>Put % Change</th>
+            </tr>
+            {% for row in data.nifty_chain %}
+            <tr>
+                <td>{{ row.strike }}</td>
+                <td>{{ row.call_oi }}</td>
+                <td>{{ row.call_ltp }}</td>
+                <td>{{ row.call_change }}</td>
+                <td>{{ row.put_oi }}</td>
+                <td>{{ row.put_ltp }}</td>
+                <td>{{ row.put_change }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+
+        <!-- BankNifty Option Chain -->
+        <h2>BankNifty Option Chain (50000 - 55000)</h2>
+        <table>
+            <tr>
+                <th>Strike</th>
+                <th>Call OI</th>
+                <th>Call LTP</th>
+                <th>Call % Change</th>
+                <th>Put OI</th>
+                <th>Put LTP</th>
+                <th>Put % Change</th>
+            </tr>
+            {% for row in data.banknifty_chain %}
+            <tr>
+                <td>{{ row.strike }}</td>
+                <td>{{ row.call_oi }}</td>
+                <td>{{ row.call_ltp }}</td>
+                <td>{{ row.call_change }}</td>
+                <td>{{ row.put_oi }}</td>
+                <td>{{ row.put_ltp }}</td>
+                <td>{{ row.put_change }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+
+        <p>Data refreshes every 5 minutes.</p>
+    {% endif %}
+</body>
+</html>
