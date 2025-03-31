@@ -2,32 +2,89 @@
 <html>
 <head>
     <title>Nifty & BankNifty Data</title>
-    <meta http-equiv="refresh" content="300"> <!-- Refreshes every 5 minutes -->
+    <meta http-equiv="refresh" content="60"> <!-- Refreshes every 1 minute -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"> <!-- Responsive viewport -->
     <style>
         body {
-            font-family: Arial, sans-serif;
+            font-family: 'Segoe UI', Arial, sans-serif;
             text-align: center;
             margin: 0 auto;
             padding: 20px;
             max-width: 1200px; /* Center content with a max width */
+            background-color: #f5f5f5;
+        }
+        h1, h2 {
+            color: #333;
+            margin-top: 30px;
         }
         table {
             margin: 20px auto;
             border-collapse: collapse;
             width: 100%;
+            background-color: #fff;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
         }
         th, td {
-            padding: 10px;
+            padding: 12px 15px;
             border: 1px solid #ddd;
+            text-align: center;
+            font-size: 16px;
         }
         th {
-            background-color: #f2f2f2;
+            background-color: #4CAF50;
+            color: white;
+            font-weight: bold;
         }
-        h1, h2 {
-            margin-top: 30px;
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        tr:hover {
+            background-color: #f1f1f1;
         }
         .section {
             margin-bottom: 40px;
+        }
+        .positive {
+            color: green;
+        }
+        .negative {
+            color: red;
+        }
+        p {
+            font-size: 14px;
+            color: #666;
+        }
+        /* Responsive design for mobile */
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+            table {
+                font-size: 14px;
+            }
+            th, td {
+                padding: 8px 10px;
+            }
+            h1 {
+                font-size: 24px;
+            }
+            h2 {
+                font-size: 20px;
+            }
+        }
+        @media (max-width: 480px) {
+            table {
+                font-size: 12px;
+            }
+            th, td {
+                padding: 6px 8px;
+            }
+            h1 {
+                font-size: 20px;
+            }
+            h2 {
+                font-size: 18px;
+            }
         }
     </style>
 </head>
@@ -60,6 +117,16 @@
                     <td>{{ data.india_vix.last_price }}</td>
                     <td>{{ data.india_vix.timestamp }}</td>
                 </tr>
+                <tr>
+                    <td>Sensex</td>
+                    <td>{{ data.sensex.last_price }}</td>
+                    <td>{{ data.sensex.timestamp }}</td>
+                </tr>
+                <tr>
+                    <td>Nifty Midcap 50</td>
+                    <td>{{ data.nifty_midcap.last_price }}</td>
+                    <td>{{ data.nifty_midcap.timestamp }}</td>
+                </tr>
             </table>
         </div>
 
@@ -85,20 +152,51 @@
             </table>
         </div>
 
-        <!-- BankNifty Constituent Stocks -->
+        <!-- BankNifty Constituent Stocks (Top Gainers) -->
         <div class="section">
-            <h2>BankNifty Constituent Stocks</h2>
+            <h2>BankNifty Constituent Stocks - Top Gainers</h2>
             <table>
                 <tr>
                     <th>Name</th>
                     <th>LTP</th>
                     <th>% Change</th>
+                    <th>Volume</th>
                 </tr>
-                {% for stock in data.bank_stocks %}
+                {% for stock in data.bank_stocks_gainers %}
                 <tr>
                     <td>{{ stock.name }}</td>
                     <td>{{ stock.ltp }}</td>
-                    <td>{{ stock.change_percent }}</td>
+                    <td class="positive">{{ stock.change_percent }}</td>
+                    <td>{{ stock.volume }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="4">No gainers at this time.</td>
+                </tr>
+                {% endfor %}
+            </table>
+        </div>
+
+        <!-- BankNifty Constituent Stocks (Top Losers) -->
+        <div class="section">
+            <h2>BankNifty Constituent Stocks - Top Losers</h2>
+            <table>
+                <tr>
+                    <th>Name</th>
+                    <th>LTP</th>
+                    <th>% Change</th>
+                    <th>Volume</th>
+                </tr>
+                {% for stock in data.bank_stocks_losers %}
+                <tr>
+                    <td>{{ stock.name }}</td>
+                    <td>{{ stock.ltp }}</td>
+                    <td class="negative">{{ stock.change_percent }}</td>
+                    <td>{{ stock.volume }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="4">No losers at this time.</td>
                 </tr>
                 {% endfor %}
             </table>
@@ -112,9 +210,11 @@
                     <th>Strike</th>
                     <th>Call OI</th>
                     <th>Call LTP</th>
+                    <th>Call Volume</th>
                     <th>Call % Change</th>
                     <th>Put OI</th>
                     <th>Put LTP</th>
+                    <th>Put Volume</th>
                     <th>Put % Change</th>
                 </tr>
                 {% for row in data.banknifty_chain %}
@@ -122,10 +222,12 @@
                     <td>{{ row.strike }}</td>
                     <td>{{ row.call_oi }}</td>
                     <td>{{ row.call_ltp }}</td>
-                    <td>{{ row.call_change }}</td>
+                    <td>{{ row.call_volume }}</td>
+                    <td class="{% if row.call_change != 'N/A' and row.call_change >= 0 %}positive{% else %}negative{% endif %}">{{ row.call_change }}</td>
                     <td>{{ row.put_oi }}</td>
                     <td>{{ row.put_ltp }}</td>
-                    <td>{{ row.put_change }}</td>
+                    <td>{{ row.put_volume }}</td>
+                    <td class="{% if row.put_change != 'N/A' and row.put_change >= 0 %}positive{% else %}negative{% endif %}">{{ row.put_change }}</td>
                 </tr>
                 {% endfor %}
             </table>
@@ -139,9 +241,11 @@
                     <th>Strike</th>
                     <th>Call OI</th>
                     <th>Call LTP</th>
+                    <th>Call Volume</th>
                     <th>Call % Change</th>
                     <th>Put OI</th>
                     <th>Put LTP</th>
+                    <th>Put Volume</th>
                     <th>Put % Change</th>
                 </tr>
                 {% for row in data.nifty_chain %}
@@ -149,16 +253,18 @@
                     <td>{{ row.strike }}</td>
                     <td>{{ row.call_oi }}</td>
                     <td>{{ row.call_ltp }}</td>
-                    <td>{{ row.call_change }}</td>
+                    <td>{{ row.call_volume }}</td>
+                    <td class="{% if row.call_change != 'N/A' and row.call_change >= 0 %}positive{% else %}negative{% endif %}">{{ row.call_change }}</td>
                     <td>{{ row.put_oi }}</td>
                     <td>{{ row.put_ltp }}</td>
-                    <td>{{ row.put_change }}</td>
+                    <td>{{ row.put_volume }}</td>
+                    <td class="{% if row.put_change != 'N/A' and row.put_change >= 0 %}positive{% else %}negative{% endif %}">{{ row.put_change }}</td>
                 </tr>
                 {% endfor %}
             </table>
         </div>
 
-        <p>Data refreshes every 5 minutes.</p>
+        <p>Data refreshes every 1 minute.</p>
         <p>Last Updated: {{ data.last_updated }}</p>
     {% endif %}
 </body>

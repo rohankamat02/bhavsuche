@@ -167,14 +167,18 @@ def get_option_chain():
         put_symbol = nifty_options["puts"].get(strike)
         call_data = quotes.get(f"NFO:{call_symbol}", {})
         put_data = quotes.get(f"NFO:{put_symbol}", {})
+        call_change = call_data.get("ohlc", {}).get("close", 0) and round(((call_data.get("last_price", 0) - call_data.get("ohlc", {}).get("close", 0)) / call_data.get("ohlc", {}).get("close", 0)) * 100, 2) if call_data.get("ohlc", {}).get("close", 0) else "N/A"
+        put_change = put_data.get("ohlc", {}).get("close", 0) and round(((put_data.get("last_price", 0) - put_data.get("ohlc", {}).get("close", 0)) / put_data.get("ohlc", {}).get("close", 0)) * 100, 2) if put_data.get("ohlc", {}).get("close", 0) else "N/A"
         nifty_chain.append({
             "strike": strike,
             "call_oi": call_data.get("oi", "N/A"),
             "call_ltp": call_data.get("last_price", "N/A"),
-            "call_change": call_data.get("ohlc", {}).get("close", 0) and round(((call_data.get("last_price", 0) - call_data.get("ohlc", {}).get("close", 0)) / call_data.get("ohlc", {}).get("close", 0)) * 100, 2) if call_data.get("ohlc", {}).get("close", 0) else "N/A",
+            "call_volume": call_data.get("volume", "N/A"),
+            "call_change": call_change,
             "put_oi": put_data.get("oi", "N/A"),
             "put_ltp": put_data.get("last_price", "N/A"),
-            "put_change": put_data.get("ohlc", {}).get("close", 0) and round(((put_data.get("last_price", 0) - put_data.get("ohlc", {}).get("close", 0)) / put_data.get("ohlc", {}).get("close", 0)) * 100, 2) if put_data.get("ohlc", {}).get("close", 0) else "N/A"
+            "put_volume": put_data.get("volume", "N/A"),
+            "put_change": put_change
         })
 
     # Process BankNifty option chain
@@ -184,19 +188,23 @@ def get_option_chain():
         put_symbol = banknifty_options["puts"].get(strike)
         call_data = quotes.get(f"NFO:{call_symbol}", {})
         put_data = quotes.get(f"NFO:{put_symbol}", {})
+        call_change = call_data.get("ohlc", {}).get("close", 0) and round(((call_data.get("last_price", 0) - call_data.get("ohlc", {}).get("close", 0)) / call_data.get("ohlc", {}).get("close", 0)) * 100, 2) if call_data.get("ohlc", {}).get("close", 0) else "N/A"
+        put_change = put_data.get("ohlc", {}).get("close", 0) and round(((put_data.get("last_price", 0) - put_data.get("ohlc", {}).get("close", 0)) / put_data.get("ohlc", {}).get("close", 0)) * 100, 2) if put_data.get("ohlc", {}).get("close", 0) else "N/A"
         banknifty_chain.append({
             "strike": strike,
             "call_oi": call_data.get("oi", "N/A"),
             "call_ltp": call_data.get("last_price", "N/A"),
-            "call_change": call_data.get("ohlc", {}).get("close", 0) and round(((call_data.get("last_price", 0) - call_data.get("ohlc", {}).get("close", 0)) / call_data.get("ohlc", {}).get("close", 0)) * 100, 2) if call_data.get("ohlc", {}).get("close", 0) else "N/A",
+            "call_volume": call_data.get("volume", "N/A"),
+            "call_change": call_change,
             "put_oi": put_data.get("oi", "N/A"),
             "put_ltp": put_data.get("last_price", "N/A"),
-            "put_change": put_data.get("ohlc", {}).get("close", 0) and round(((put_data.get("last_price", 0) - put_data.get("ohlc", {}).get("close", 0)) / put_data.get("ohlc", {}).get("close", 0)) * 100, 2) if put_data.get("ohlc", {}).get("close", 0) else "N/A"
+            "put_volume": put_data.get("volume", "N/A"),
+            "put_change": put_change
         })
 
     return nifty_chain, banknifty_chain
 
-# Function to fetch BankNifty constituent stocks' LTP and % change
+# Function to fetch BankNifty constituent stocks' LTP, % change, and volume
 def get_bank_stocks_data():
     try:
         quotes = kite.quote(BANKNIFTY_STOCKS)
@@ -206,24 +214,31 @@ def get_bank_stocks_data():
             ltp = stock_data.get("last_price", "N/A")
             close = stock_data.get("ohlc", {}).get("close", 0)
             change_percent = round(((ltp - close) / close) * 100, 2) if close and ltp != "N/A" else "N/A"
+            volume = stock_data.get("volume", "N/A")
             bank_stocks.append({
                 "name": symbol.split(":")[1],  # Extract stock name (e.g., HDFCBANK)
                 "ltp": ltp,
-                "change_percent": change_percent
+                "change_percent": change_percent,
+                "volume": volume
             })
-        return bank_stocks
+        # Sort into gainers and losers
+        gainers = sorted([stock for stock in bank_stocks if isinstance(stock["change_percent"], (int, float)) and stock["change_percent"] >= 0], key=lambda x: x["change_percent"], reverse=True)
+        losers = sorted([stock for stock in bank_stocks if isinstance(stock["change_percent"], (int, float)) and stock["change_percent"] < 0], key=lambda x: x["change_percent"])
+        return gainers, losers
     except Exception as e:
         print(f"Error fetching bank stocks data: {e}")
-        return [{"name": stock.split(":")[1], "ltp": "N/A", "change_percent": "N/A"} for stock in BANKNIFTY_STOCKS]
+        return [], []
 
 # Function to fetch all required data
 def get_indices_data():
     try:
-        # Fetch Nifty, BankNifty, and India VIX data
-        indices = kite.quote(["NSE:NIFTY 50", "NSE:NIFTY BANK", "NSE:INDIA VIX"])
+        # Fetch Indices data (Nifty 50, BankNifty, India VIX, Sensex, Nifty Midcap)
+        indices = kite.quote(["NSE:NIFTY 50", "NSE:NIFTY BANK", "NSE:INDIA VIX", "BSE:SENSEX", "NSE:NIFTY MIDCAP 50"])
         nifty = indices["NSE:NIFTY 50"]
         banknifty = indices["NSE:NIFTY BANK"]
         india_vix = indices["NSE:INDIA VIX"]
+        sensex = indices["BSE:SENSEX"]
+        nifty_midcap = indices["NSE:NIFTY MIDCAP 50"]
 
         # Fetch ATM OI data for Nifty and BankNifty
         nifty_call_symbol, nifty_put_symbol, banknifty_call_symbol, banknifty_put_symbol = get_atm_option_contracts()
@@ -237,7 +252,7 @@ def get_indices_data():
         nifty_chain, banknifty_chain = get_option_chain()
 
         # Fetch BankNifty constituent stocks data
-        bank_stocks = get_bank_stocks_data()
+        bank_stocks_gainers, bank_stocks_losers = get_bank_stocks_data()
 
         return {
             "nifty": {
@@ -252,6 +267,14 @@ def get_indices_data():
                 "last_price": india_vix.get("last_price", "N/A"),
                 "timestamp": india_vix.get("last_time", "Market Closed")
             },
+            "sensex": {
+                "last_price": sensex.get("last_price", "N/A"),
+                "timestamp": sensex.get("last_time", "Market Closed")
+            },
+            "nifty_midcap": {
+                "last_price": nifty_midcap.get("last_price", "N/A"),
+                "timestamp": nifty_midcap.get("last_time", "Market Closed")
+            },
             "options": {
                 "nifty_call": options_data.get(f"NFO:{nifty_call_symbol}", {}).get("oi", "N/A"),
                 "nifty_put": options_data.get(f"NFO:{nifty_put_symbol}", {}).get("oi", "N/A"),
@@ -260,7 +283,8 @@ def get_indices_data():
             },
             "nifty_chain": nifty_chain,
             "banknifty_chain": banknifty_chain,
-            "bank_stocks": bank_stocks
+            "bank_stocks_gainers": bank_stocks_gainers,
+            "bank_stocks_losers": bank_stocks_losers
         }
     except Exception as e:
         return {"error": str(e)}
