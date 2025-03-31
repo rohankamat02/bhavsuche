@@ -99,33 +99,45 @@
             <table>
                 <tr>
                     <th>Index</th>
-                    <th>Last Price</th>
-                    <th>Timestamp</th>
+                    <th>Current Price</th>
+                    <th>Current Timestamp</th>
+                    <th>Futures Price</th>
+                    <th>Futures Timestamp</th>
                 </tr>
                 <tr>
                     <td>Nifty 50</td>
                     <td>{{ data.nifty.last_price }}</td>
                     <td>{{ data.nifty.timestamp }}</td>
+                    <td>{{ data.futures.nifty_future.ltp }}</td>
+                    <td>{{ data.futures.nifty_future.timestamp }}</td>
                 </tr>
                 <tr>
                     <td>BankNifty</td>
                     <td>{{ data.banknifty.last_price }}</td>
                     <td>{{ data.banknifty.timestamp }}</td>
+                    <td>{{ data.futures.banknifty_future.ltp }}</td>
+                    <td>{{ data.futures.banknifty_future.timestamp }}</td>
                 </tr>
                 <tr>
                     <td>India VIX</td>
                     <td>{{ data.india_vix.last_price }}</td>
                     <td>{{ data.india_vix.timestamp }}</td>
+                    <td>-</td>
+                    <td>-</td>
                 </tr>
                 <tr>
                     <td>Sensex</td>
                     <td>{{ data.sensex.last_price }}</td>
                     <td>{{ data.sensex.timestamp }}</td>
+                    <td>-</td>
+                    <td>-</td>
                 </tr>
                 <tr>
                     <td>Nifty Midcap 50</td>
                     <td>{{ data.nifty_midcap.last_price }}</td>
                     <td>{{ data.nifty_midcap.timestamp }}</td>
+                    <td>-</td>
+                    <td>-</td>
                 </tr>
             </table>
         </div>

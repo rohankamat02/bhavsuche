@@ -60,14 +60,75 @@ BANKNIFTY_STOCKS = [
     "NSE:AUBANK"  # AU Small Finance Bank
 ]
 
-# Function to get the current weekly expiry for Nifty and BankNifty
-def get_current_expiry():
+# Function to get the last Thursday of the month, adjusting for bank holidays
+def get_last_thursday_of_month(year, month):
+    # Get the last day of the month
+    last_day = (datetime.date(year, month + 1, 1) - datetime.timedelta(days=1)) if month < 12 else datetime.date(year, 12, 31)
+
+    # Find the last Thursday
+    current_date = last_day
+    while current_date.weekday() != 3:  # 3 is Thursday
+        current_date -= datetime.timedelta(days=1)
+
+    # Check if the last Thursday is a bank holiday
+    while current_date.strftime("%Y-%m-%d") in BANK_HOLIDAYS:
+        current_date -= datetime.timedelta(days=1)  # Move to Wednesday if Thursday is a holiday
+        while current_date.weekday() != 2:  # 2 is Wednesday
+            current_date -= datetime.timedelta(days=1)
+
+    return current_date
+
+# Function to get the last Thursday of the week, adjusting for bank holidays
+def get_last_thursday_of_week(start_date):
+    # Find the end of the week (Saturday)
+    days_to_saturday = (5 - start_date.weekday() + 7) % 7  # 5 is Saturday
+    end_of_week = start_date + datetime.timedelta(days=days_to_saturday)
+
+    # Find the last Thursday of the week
+    current_date = end_of_week
+    while current_date.weekday() != 3:  # 3 is Thursday
+        current_date -= datetime.timedelta(days=1)
+
+    # Check if the last Thursday is a bank holiday
+    while current_date.strftime("%Y-%m-%d") in BANK_HOLIDAYS:
+        current_date -= datetime.timedelta(days=1)  # Move to Wednesday if Thursday is a holiday
+        while current_date.weekday() != 2:  # 2 is Wednesday
+            current_date -= datetime.timedelta(days=1)
+
+    return current_date
+
+# Function to get the current monthly expiry for BankNifty
+def get_banknifty_monthly_expiry():
     today = datetime.date.today()
-    # Assuming weekly expiry is on Thursday for Nifty/BankNifty
-    days_to_thursday = (3 - today.weekday() + 7) % 7  # 3 is Thursday
-    if days_to_thursday == 0 and today.weekday() > 3:  # If today is past Thursday
-        days_to_thursday = 7
-    expiry_date = today + datetime.timedelta(days=days_to_thursday)
+    year = today.year
+    month = today.month
+
+    # If today is past the expiry date of the current month, move to the next month
+    last_thursday = get_last_thursday_of_month(year, month)
+    if today > last_thursday:
+        month += 1
+        if month > 12:
+            month = 1
+            year += 1
+        last_thursday = get_last_thursday_of_month(year, month)
+
+    return last_thursday
+
+# Function to get the current weekly expiry for Nifty
+def get_nifty_weekly_expiry():
+    today = datetime.date.today()
+
+    # Find the start of the week (Monday)
+    start_of_week = today - datetime.timedelta(days=today.weekday())
+
+    # Find the next Thursday (or Wednesday if Thursday is a holiday)
+    expiry_date = get_last_thursday_of_week(start_of_week)
+
+    # If today is past the expiry date, move to the next week
+    if today > expiry_date:
+        start_of_week += datetime.timedelta(days=7)
+        expiry_date = get_last_thursday_of_week(start_of_week)
+
     return expiry_date
 
 # Function to fetch ATM option contracts for summary
@@ -75,8 +136,9 @@ def get_atm_option_contracts():
     # Fetch all instruments
     instruments = kite.instruments("NFO")
 
-    # Get current expiry
-    expiry_date = get_current_expiry()
+    # Get current expiry dates
+    nifty_expiry = get_nifty_weekly_expiry()
+    banknifty_expiry = get_banknifty_monthly_expiry()
 
     # Find Nifty and BankNifty ATM options
     nifty_call = None
@@ -98,19 +160,18 @@ def get_atm_option_contracts():
     banknifty_strike = round(banknifty_spot / 100) * 100 if banknifty_spot else 0
 
     for instrument in instruments:
-        if instrument["expiry"] == expiry_date:
-            # Nifty Call and Put
-            if instrument["name"] == "NIFTY" and instrument["strike"] == nifty_strike:
-                if instrument["instrument_type"] == "CE":
-                    nifty_call = instrument["tradingsymbol"]
-                elif instrument["instrument_type"] == "PE":
-                    nifty_put = instrument["tradingsymbol"]
-            # BankNifty Call and Put
-            if instrument["name"] == "BANKNIFTY" and instrument["strike"] == banknifty_strike:
-                if instrument["instrument_type"] == "CE":
-                    banknifty_call = instrument["tradingsymbol"]
-                elif instrument["instrument_type"] == "PE":
-                    banknifty_put = instrument["tradingsymbol"]
+        # Nifty Call and Put
+        if instrument["expiry"] == nifty_expiry and instrument["name"] == "NIFTY" and instrument["strike"] == nifty_strike:
+            if instrument["instrument_type"] == "CE":
+                nifty_call = instrument["tradingsymbol"]
+            elif instrument["instrument_type"] == "PE":
+                nifty_put = instrument["tradingsymbol"]
+        # BankNifty Call and Put
+        if instrument["expiry"] == banknifty_expiry and instrument["name"] == "BANKNIFTY" and instrument["strike"] == banknifty_strike:
+            if instrument["instrument_type"] == "CE":
+                banknifty_call = instrument["tradingsymbol"]
+            elif instrument["instrument_type"] == "PE":
+                banknifty_put = instrument["tradingsymbol"]
 
     return nifty_call, nifty_put, banknifty_call, banknifty_put
 
@@ -119,8 +180,9 @@ def get_option_chain():
     # Fetch all instruments for NFO (futures and options)
     instruments = kite.instruments("NFO")
 
-    # Get current expiry
-    expiry_date = get_current_expiry()
+    # Get current expiry dates
+    nifty_expiry = get_nifty_weekly_expiry()
+    banknifty_expiry = get_banknifty_monthly_expiry()
 
     # Define strike ranges
     nifty_strike_range = range(20000, 25001, 100)  # Nifty: 20000 to 25000, step 100
@@ -135,23 +197,22 @@ def get_option_chain():
     banknifty_symbols = []
 
     for instrument in instruments:
-        if instrument["expiry"] == expiry_date:
-            # Nifty options
-            if instrument["name"] == "NIFTY" and instrument["strike"] in nifty_strike_range:
-                if instrument["instrument_type"] == "CE":
-                    nifty_options["calls"][instrument["strike"]] = instrument["tradingsymbol"]
-                    nifty_symbols.append(f"NFO:{instrument['tradingsymbol']}")
-                elif instrument["instrument_type"] == "PE":
-                    nifty_options["puts"][instrument["strike"]] = instrument["tradingsymbol"]
-                    nifty_symbols.append(f"NFO:{instrument['tradingsymbol']}")
-            # BankNifty options
-            if instrument["name"] == "BANKNIFTY" and instrument["strike"] in banknifty_strike_range:
-                if instrument["instrument_type"] == "CE":
-                    banknifty_options["calls"][instrument["strike"]] = instrument["tradingsymbol"]
-                    banknifty_symbols.append(f"NFO:{instrument['tradingsymbol']}")
-                elif instrument["instrument_type"] == "PE":
-                    banknifty_options["puts"][instrument["strike"]] = instrument["tradingsymbol"]
-                    banknifty_symbols.append(f"NFO:{instrument['tradingsymbol']}")
+        # Nifty options
+        if instrument["expiry"] == nifty_expiry and instrument["name"] == "NIFTY" and instrument["strike"] in nifty_strike_range:
+            if instrument["instrument_type"] == "CE":
+                nifty_options["calls"][instrument["strike"]] = instrument["tradingsymbol"]
+                nifty_symbols.append(f"NFO:{instrument['tradingsymbol']}")
+            elif instrument["instrument_type"] == "PE":
+                nifty_options["puts"][instrument["strike"]] = instrument["tradingsymbol"]
+                nifty_symbols.append(f"NFO:{instrument['tradingsymbol']}")
+        # BankNifty options
+        if instrument["expiry"] == banknifty_expiry and instrument["name"] == "BANKNIFTY" and instrument["strike"] in banknifty_strike_range:
+            if instrument["instrument_type"] == "CE":
+                banknifty_options["calls"][instrument["strike"]] = instrument["tradingsymbol"]
+                banknifty_symbols.append(f"NFO:{instrument['tradingsymbol']}")
+            elif instrument["instrument_type"] == "PE":
+                banknifty_options["puts"][instrument["strike"]] = instrument["tradingsymbol"]
+                banknifty_symbols.append(f"NFO:{instrument['tradingsymbol']}")
 
     # Fetch quotes for all option contracts
     all_symbols = nifty_symbols + banknifty_symbols
@@ -204,6 +265,53 @@ def get_option_chain():
 
     return nifty_chain, banknifty_chain
 
+# Function to fetch Nifty and BankNifty futures data for the current month
+def get_futures_data():
+    # Get the current month and year
+    today = datetime.date.today()
+    year = today.year
+    month = today.month
+
+    # Get the last Thursday of the current month for futures expiry
+    futures_expiry = get_last_thursday_of_month(year, month)
+
+    # If today is past the expiry, move to the next month
+    if today > futures_expiry:
+        month += 1
+        if month > 12:
+            month = 1
+            year += 1
+        futures_expiry = get_last_thursday_of_month(year, month)
+
+    # Format the expiry for the trading symbol (e.g., "25APR" for April 2025)
+    expiry_str = futures_expiry.strftime("%y%b").upper()  # e.g., "25APR"
+
+    # Define futures symbols
+    nifty_future_symbol = f"NFO:NIFTY{expiry_str}FUT"
+    banknifty_future_symbol = f"NFO:BANKNIFTY{expiry_str}FUT"
+
+    # Fetch futures data
+    try:
+        futures_data = kite.quote([nifty_future_symbol, banknifty_future_symbol])
+        nifty_future = futures_data.get(nifty_future_symbol, {})
+        banknifty_future = futures_data.get(banknifty_future_symbol, {})
+        return {
+            "nifty_future": {
+                "ltp": nifty_future.get("last_price", "N/A"),
+                "timestamp": nifty_future.get("last_time", "Market Closed")
+            },
+            "banknifty_future": {
+                "ltp": banknifty_future.get("last_price", "N/A"),
+                "timestamp": banknifty_future.get("last_time", "Market Closed")
+            }
+        }
+    except Exception as e:
+        print(f"Error fetching futures data: {e}")
+        return {
+            "nifty_future": {"ltp": "N/A", "timestamp": "Market Closed"},
+            "banknifty_future": {"ltp": "N/A", "timestamp": "Market Closed"}
+        }
+
 # Function to fetch BankNifty constituent stocks' LTP, % change, and volume
 def get_bank_stocks_data():
     try:
@@ -240,6 +348,9 @@ def get_indices_data():
         sensex = indices["BSE:SENSEX"]
         nifty_midcap = indices["NSE:NIFTY MIDCAP 50"]
 
+        # Fetch futures data for Nifty and BankNifty
+        futures = get_futures_data()
+
         # Fetch ATM OI data for Nifty and BankNifty
         nifty_call_symbol, nifty_put_symbol, banknifty_call_symbol, banknifty_put_symbol = get_atm_option_contracts()
         option_symbols = [f"NFO:{symbol}" for symbol in [nifty_call_symbol, nifty_put_symbol, banknifty_call_symbol, banknifty_put_symbol] if symbol]
@@ -275,6 +386,7 @@ def get_indices_data():
                 "last_price": nifty_midcap.get("last_price", "N/A"),
                 "timestamp": nifty_midcap.get("last_time", "Market Closed")
             },
+            "futures": futures,
             "options": {
                 "nifty_call": options_data.get(f"NFO:{nifty_call_symbol}", {}).get("oi", "N/A"),
                 "nifty_put": options_data.get(f"NFO:{nifty_put_symbol}", {}).get("oi", "N/A"),
