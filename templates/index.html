@@ -87,6 +87,12 @@
             }
         }
     </style>
+    <!-- JavaScript fallback for refresh -->
+    <script>
+        setTimeout(function() {
+            window.location.reload();
+        }, 60000); // Refresh every 60 seconds
+    </script>
 </head>
 <body>
     <h1>Live Market Data ({{ data.current_date_day }})</h1>
@@ -101,6 +107,7 @@
                     <th>Index</th>
                     <th>Current Price</th>
                     <th>Current Timestamp</th>
+                    <th>VWAP</th>
                     <th>Futures Price</th>
                     <th>Futures Timestamp</th>
                 </tr>
@@ -108,6 +115,7 @@
                     <td>Nifty 50</td>
                     <td>{{ data.nifty.last_price }}</td>
                     <td>{{ data.nifty.timestamp }}</td>
+                    <td>{{ data.nifty.vwap }}</td>
                     <td>{{ data.futures.nifty_future.ltp }}</td>
                     <td>{{ data.futures.nifty_future.timestamp }}</td>
                 </tr>
@@ -115,6 +123,7 @@
                     <td>BankNifty</td>
                     <td>{{ data.banknifty.last_price }}</td>
                     <td>{{ data.banknifty.timestamp }}</td>
+                    <td>{{ data.banknifty.vwap }}</td>
                     <td>{{ data.futures.banknifty_future.ltp }}</td>
                     <td>{{ data.futures.banknifty_future.timestamp }}</td>
                 </tr>
@@ -124,6 +133,7 @@
                     <td>{{ data.india_vix.timestamp }}</td>
                     <td>-</td>
                     <td>-</td>
+                    <td>-</td>
                 </tr>
                 <tr>
                     <td>Sensex</td>
@@ -131,11 +141,13 @@
                     <td>{{ data.sensex.timestamp }}</td>
                     <td>-</td>
                     <td>-</td>
+                    <td>-</td>
                 </tr>
                 <tr>
                     <td>Nifty Midcap 50</td>
                     <td>{{ data.nifty_midcap.last_price }}</td>
                     <td>{{ data.nifty_midcap.timestamp }}</td>
+                    <td>-</td>
                     <td>-</td>
                     <td>-</td>
                 </tr>

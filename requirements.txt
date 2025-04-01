@@ -1,3 +1,5 @@
 flask
 kiteconnect
 gunicorn
+ratelimit
+cachetools
