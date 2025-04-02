@@ -131,7 +131,7 @@
                     <td>India VIX</td>
                     <td>{{ data.india_vix.last_price }}</td>
                     <td>{{ data.india_vix.timestamp }}</td>
-                    <td>-</td>
+                    <td>{{ data.india_vix.vwap }}</td>
                     <td>-</td>
                     <td>-</td>
                 </tr>
@@ -139,7 +139,7 @@
                     <td>Sensex</td>
                     <td>{{ data.sensex.last_price }}</td>
                     <td>{{ data.sensex.timestamp }}</td>
-                    <td>-</td>
+                    <td>{{ data.sensex.vwap }}</td>
                     <td>-</td>
                     <td>-</td>
                 </tr>
@@ -147,7 +147,7 @@
                     <td>Nifty Midcap 50</td>
                     <td>{{ data.nifty_midcap.last_price }}</td>
                     <td>{{ data.nifty_midcap.timestamp }}</td>
-                    <td>-</td>
+                    <td>{{ data.nifty_midcap.vwap }}</td>
                     <td>-</td>
                     <td>-</td>
                 </tr>
@@ -228,7 +228,7 @@
 
         <!-- BankNifty Option Chain -->
         <div class="section">
-            <h2>BankNifty Option Chain (50000 - 55000)</h2>
+            <h2>BankNifty Option Chain</h2>
             <table>
                 <tr>
                     <th>Strike</th>
@@ -259,7 +259,7 @@
 
         <!-- Nifty Option Chain -->
         <div class="section">
-            <h2>Nifty Option Chain (20000 - 25000)</h2>
+            <h2>Nifty Option Chain</h2>
             <table>
                 <tr>
                     <th>Strike</th>

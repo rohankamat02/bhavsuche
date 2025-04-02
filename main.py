@@ -4,16 +4,21 @@ import datetime
 import os
 import time
 from threading import Thread
-import cachetools
+import logging
+from ratelimit import limits, sleep_and_retry
 
 app = Flask(__name__, template_folder='templates')
 
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 # Debug template folder
-print("Current working directory:", os.getcwd())
-print("Flask app root path:", app.root_path)
-print("Templates folder path:", os.path.join(app.root_path, 'templates'))
-print("Does templates folder exist?", os.path.exists(os.path.join(app.root_path, 'templates')))
-print("Does index.html exist?", os.path.exists(os.path.join(app.root_path, 'templates', 'index.html')))
+logger.info("Current working directory: %s", os.getcwd())
+logger.info("Flask app root path: %s", app.root_path)
+logger.info("Templates folder path: %s", os.path.join(app.root_path, 'templates'))
+logger.info("Does templates folder exist? %s", os.path.exists(os.path.join(app.root_path, 'templates')))
+logger.info("Does index.html exist? %s", os.path.exists(os.path.join(app.root_path, 'templates', 'index.html')))
 
 # Your Kite Connect credentials from MoneyGarage
 API_KEY = os.getenv("API_KEY", "c2wxelu2x0p4rtc")
@@ -24,13 +29,13 @@ ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")  # This will be set via environment var
 kite = KiteConnect(api_key=API_KEY)
 kite.set_access_token(ACCESS_TOKEN)
 
-# Global variables
+# Global variables for caching
 app_active = False
 last_updated = None
 current_date_day = None
-
-# Cache for API responses (TTL of 30 seconds)
-cache = cachetools.TTLCache(maxsize=100, ttl=30)
+cached_data = None
+cache_timestamp = None
+CACHE_DURATION = 60  # Cache data for 60 seconds
 
 # List of bank holidays in India for 2025
 BANK_HOLIDAYS = [
@@ -63,6 +68,12 @@ BANKNIFTY_STOCKS = [
     "NSE:IDFCFIRSTB",
     "NSE:AUBANK"  # AU Small Finance Bank
 ]
+
+# Rate limiting for Kite Connect API (3 requests per second)
+@sleep_and_retry
+@limits(calls=3, period=1)  # 3 requests per second
+def rate_limited_quote(symbols):
+    return kite.quote(symbols)
 
 # Function to get the last Thursday of the month, adjusting for bank holidays
 def get_last_thursday_of_month(year, month):
@@ -152,10 +163,11 @@ def get_atm_option_contracts():
 
     # Get spot prices to determine ATM strikes
     try:
-        indices = kite.quote(["NSE:NIFTY 50", "NSE:NIFTY BANK"])
+        indices = rate_limited_quote(["NSE:NIFTY 50", "NSE:NIFTY BANK"])
         nifty_spot = indices["NSE:NIFTY 50"].get("last_price", 0)
         banknifty_spot = indices["NSE:NIFTY BANK"].get("last_price", 0)
-    except Exception:
+    except Exception as e:
+        logger.error("Error fetching spot prices for ATM strikes: %s", e)
         nifty_spot = 0
         banknifty_spot = 0
 
@@ -188,9 +200,9 @@ def get_option_chain():
     nifty_expiry = get_nifty_weekly_expiry()
     banknifty_expiry = get_banknifty_monthly_expiry()
 
-    # Define strike ranges
-    nifty_strike_range = range(20000, 25001, 100)  # Nifty: 20000 to 25000, step 100
-    banknifty_strike_range = range(49000, 55001, 100)  # BankNifty: 49000 to 55000, step 100
+    # Define strike ranges (reduced to minimize API calls)
+    nifty_strike_range = range(23000, 24001, 100)  # Narrowed range to reduce symbols
+    banknifty_strike_range = range(51000, 52001, 100)  # Narrowed range to reduce symbols
 
     # Collect option contracts
     nifty_options = {"calls": {}, "puts": {}}
@@ -218,25 +230,19 @@ def get_option_chain():
                 banknifty_options["puts"][instrument["strike"]] = instrument["tradingsymbol"]
                 banknifty_symbols.append(f"NFO:{instrument['tradingsymbol']}")
 
-    # Fetch quotes for all option contracts with throttling
+    # Fetch quotes for all option contracts in batches to avoid rate limits
     all_symbols = nifty_symbols + banknifty_symbols
     quotes = {}
-    batch_size = 50  # Process 50 symbols at a time to stay within rate limits
+    batch_size = 100  # Kite Connect allows up to 1000 symbols per request, but we use 100 to be safe
     for i in range(0, len(all_symbols), batch_size):
         batch = all_symbols[i:i + batch_size]
-        cache_key = tuple(batch)
-        if cache_key in cache:
-            quotes.update(cache[cache_key])
-        else:
-            try:
-                batch_quotes = kite.quote(batch)
-                quotes.update(batch_quotes)
-                cache[cache_key] = batch_quotes
-                time.sleep(1)  # Throttle to 1 request per second
-            except Exception as e:
-                print(f"Error fetching option chain quotes: {e}")
-                for symbol in batch:
-                    quotes[symbol] = {}
+        try:
+            batch_quotes = rate_limited_quote(batch)
+            quotes.update(batch_quotes)
+        except Exception as e:
+            logger.error("Error fetching option chain quotes for batch: %s", e)
+            for symbol in batch:
+                quotes[symbol] = {}
 
     # Process Nifty option chain
     nifty_chain = []
@@ -309,14 +315,7 @@ def get_futures_data():
 
     # Fetch futures data
     try:
-        cache_key = (nifty_future_symbol, banknifty_future_symbol)
-        if cache_key in cache:
-            futures_data = cache[cache_key]
-        else:
-            futures_data = kite.quote([nifty_future_symbol, banknifty_future_symbol])
-            cache[cache_key] = futures_data
-            time.sleep(1)  # Throttle to 1 request per second
-
+        futures_data = rate_limited_quote([nifty_future_symbol, banknifty_future_symbol])
         nifty_future = futures_data.get(nifty_future_symbol, {})
         banknifty_future = futures_data.get(banknifty_future_symbol, {})
         return {
@@ -330,7 +329,7 @@ def get_futures_data():
             }
         }
     except Exception as e:
-        print(f"Error fetching futures data: {e}")
+        logger.error("Error fetching futures data: %s", e)
         return {
             "nifty_future": {"ltp": "N/A", "timestamp": "Market Closed"},
             "banknifty_future": {"ltp": "N/A", "timestamp": "Market Closed"}
@@ -339,14 +338,7 @@ def get_futures_data():
 # Function to fetch BankNifty constituent stocks' LTP, % change, and volume
 def get_bank_stocks_data():
     try:
-        cache_key = tuple(BANKNIFTY_STOCKS)
-        if cache_key in cache:
-            quotes = cache[cache_key]
-        else:
-            quotes = kite.quote(BANKNIFTY_STOCKS)
-            cache[cache_key] = quotes
-            time.sleep(1)  # Throttle to 1 request per second
-
+        quotes = rate_limited_quote(BANKNIFTY_STOCKS)
         bank_stocks = []
         for symbol in BANKNIFTY_STOCKS:
             stock_data = quotes.get(symbol, {})
@@ -365,22 +357,22 @@ def get_bank_stocks_data():
         losers = sorted([stock for stock in bank_stocks if isinstance(stock["change_percent"], (int, float)) and stock["change_percent"] < 0], key=lambda x: x["change_percent"])
         return gainers, losers
     except Exception as e:
-        print(f"Error fetching bank stocks data: {e}")
+        logger.error("Error fetching bank stocks data: %s", e)
         return [], []
 
 # Function to fetch all required data
 def get_indices_data():
+    global cached_data, cache_timestamp
+
+    # Check if cached data is still valid
+    if cache_timestamp and (time.time() - cache_timestamp) < CACHE_DURATION and cached_data:
+        logger.info("Returning cached data")
+        return cached_data
+
     try:
         # Fetch Indices data (Nifty 50, BankNifty, India VIX, Sensex, Nifty Midcap)
         indices_symbols = ["NSE:NIFTY 50", "NSE:NIFTY BANK", "NSE:INDIA VIX", "BSE:SENSEX", "NSE:NIFTY MIDCAP 50"]
-        cache_key = tuple(indices_symbols)
-        if cache_key in cache:
-            indices = cache[cache_key]
-        else:
-            indices = kite.quote(indices_symbols)
-            cache[cache_key] = indices
-            time.sleep(1)  # Throttle to 1 request per second
-
+        indices = rate_limited_quote(indices_symbols)
         nifty = indices["NSE:NIFTY 50"]
         banknifty = indices["NSE:NIFTY BANK"]
         india_vix = indices["NSE:INDIA VIX"]
@@ -394,14 +386,9 @@ def get_indices_data():
         nifty_call_symbol, nifty_put_symbol, banknifty_call_symbol, banknifty_put_symbol = get_atm_option_contracts()
         option_symbols = [f"NFO:{symbol}" for symbol in [nifty_call_symbol, nifty_put_symbol, banknifty_call_symbol, banknifty_put_symbol] if symbol]
         try:
-            cache_key = tuple(option_symbols)
-            if cache_key in cache:
-                options_data = cache[cache_key]
-            else:
-                options_data = kite.quote(option_symbols)
-                cache[cache_key] = options_data
-                time.sleep(1)  # Throttle to 1 request per second
-        except Exception:
+            options_data = rate_limited_quote(option_symbols) if option_symbols else {}
+        except Exception as e:
+            logger.error("Error fetching options data: %s", e)
             options_data = {}
 
         # Fetch option chain data
@@ -410,34 +397,32 @@ def get_indices_data():
         # Fetch BankNifty constituent stocks data
         bank_stocks_gainers, bank_stocks_losers = get_bank_stocks_data()
 
-        # Get current time in IST as a fallback for timestamp
-        utc_now = datetime.datetime.now(datetime.timezone.utc)
-        ist_offset = datetime.timedelta(hours=5, minutes=30)
-        ist_now = utc_now + ist_offset
-        current_time = ist_now.strftime("%Y-%m-%d %H:%M:%S")
-
-        return {
+        # Prepare the data dictionary
+        data = {
             "nifty": {
                 "last_price": nifty.get("last_price", "N/A"),
-                "timestamp": nifty.get("last_time", current_time),
-                "vwap": nifty.get("average_price", "N/A")
+                "timestamp": nifty.get("last_time", "Market Closed"),
+                "vwap": nifty.get("vwap", "N/A")
             },
             "banknifty": {
                 "last_price": banknifty.get("last_price", "N/A"),
-                "timestamp": banknifty.get("last_time", current_time),
-                "vwap": banknifty.get("average_price", "N/A")
+                "timestamp": banknifty.get("last_time", "Market Closed"),
+                "vwap": banknifty.get("vwap", "N/A")
             },
             "india_vix": {
                 "last_price": india_vix.get("last_price", "N/A"),
-                "timestamp": india_vix.get("last_time", current_time)
+                "timestamp": india_vix.get("last_time", "Market Closed"),
+                "vwap": "N/A"  # VWAP not applicable for India VIX
             },
             "sensex": {
                 "last_price": sensex.get("last_price", "N/A"),
-                "timestamp": sensex.get("last_time", current_time)
+                "timestamp": sensex.get("last_time", "Market Closed"),
+                "vwap": "N/A"  # VWAP not applicable for Sensex
             },
             "nifty_midcap": {
                 "last_price": nifty_midcap.get("last_price", "N/A"),
-                "timestamp": nifty_midcap.get("last_time", current_time)
+                "timestamp": nifty_midcap.get("last_time", "Market Closed"),
+                "vwap": "N/A"  # VWAP not applicable for Nifty Midcap
             },
             "futures": futures,
             "options": {
@@ -451,8 +436,14 @@ def get_indices_data():
             "bank_stocks_gainers": bank_stocks_gainers,
             "bank_stocks_losers": bank_stocks_losers
         }
+
+        # Cache the data
+        cached_data = data
+        cache_timestamp = time.time()
+        return data
     except Exception as e:
-        return {"error": str(e)}
+        logger.error("Error fetching indices data: %s", e)
+        return {"error": f"Failed to fetch data: {str(e)}"}
 
 # Function to check if current time is within market hours
 def is_within_market_hours():
@@ -460,6 +451,10 @@ def is_within_market_hours():
     utc_now = datetime.datetime.now(datetime.timezone.utc)
     ist_offset = datetime.timedelta(hours=5, minutes=30)
     ist_now = utc_now + ist_offset
+
+    # Log the calculated times for debugging
+    logger.info("UTC time: %s", utc_now)
+    logger.info("IST time: %s", ist_now)
 
     # Get current day and time
     current_day = ist_now.weekday()  # 0 = Monday, 6 = Sunday
@@ -469,6 +464,7 @@ def is_within_market_hours():
 
     # Check if today is a bank holiday
     if current_date in BANK_HOLIDAYS:
+        logger.info("Today (%s) is a bank holiday", current_date)
         return False
 
     # Market hours: 9:15 AM to 3:30 PM IST, Monday to Friday
@@ -476,6 +472,7 @@ def is_within_market_hours():
     is_after_open = (current_hour > 9) or (current_hour == 9 and current_minute >= 15)
     is_before_close = (current_hour < 15) or (current_hour == 15 and current_minute < 30)
 
+    logger.info("is_weekday: %s, is_after_open: %s, is_before_close: %s", is_weekday, is_after_open, is_before_close)
     return is_weekday and is_after_open and is_before_close
 
 # Function to update app status and timestamps
@@ -491,7 +488,7 @@ def update_app_status():
         last_updated = ist_now.strftime("%Y-%m-%d %H:%M:%S IST")
         current_date_day = ist_now.strftime("%Y-%m-%d, %A")
 
-        print(f"App active status: {app_active}, Last updated: {last_updated}")
+        logger.info("App active status: %s, Last updated: %s", app_active, last_updated)
         time.sleep(60)  # Check every minute
 
 # Start the status updater in a separate thread
@@ -512,11 +509,11 @@ def display_indices():
     if not app_active:
         return "App is outside market hours (9:15 AM to 3:30 PM IST, Monday to Friday).", 503
 
-    # Add headers to prevent caching
-    response = render_template('index.html', data=get_indices_data())
-    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, post-check=0, pre-check=0'
+    # Prevent browser caching
+    response = Response(render_template('index.html', data=get_indices_data(), last_updated=last_updated, current_date_day=current_date_day))
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, post-check=0, pre-check=0, max-age=0'
     response.headers['Pragma'] = 'no-cache'
-    response.headers['Expires'] = '0'
+    response.headers['Expires'] = '-1'
     return response
 
 if __name__ == '__main__':
