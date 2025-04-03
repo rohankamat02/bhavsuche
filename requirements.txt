@@ -2,4 +2,6 @@ flask
 kiteconnect
 gunicorn
 ratelimit
+pendulum
+requests
 cachetools

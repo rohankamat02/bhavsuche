@@ -6,6 +6,14 @@ import time
 from threading import Thread
 import logging
 from ratelimit import limits, sleep_and_retry
+try:
+    import pendulum
+except ImportError:
+    pendulum = None
+try:
+    import requests
+except ImportError:
+    requests = None
 
 app = Flask(__name__, template_folder='templates')
 
@@ -26,8 +34,12 @@ API_SECRET = os.getenv("API_SECRET", "7ly65y73hzvcgsbnfqiugs1nzw73jzo")
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")  # This will be set via environment variables
 
 # Initialize Kite Connect
-kite = KiteConnect(api_key=API_KEY)
-kite.set_access_token(ACCESS_TOKEN)
+try:
+    kite = KiteConnect(api_key=API_KEY)
+    kite.set_access_token(ACCESS_TOKEN)
+    logger.info("Kite Connect initialized successfully with API_KEY: %s and ACCESS_TOKEN: %s", API_KEY, ACCESS_TOKEN)
+except Exception as e:
+    logger.error("Error initializing Kite Connect: %s", e)
 
 # Global variables for caching
 app_active = False
@@ -73,7 +85,13 @@ BANKNIFTY_STOCKS = [
 @sleep_and_retry
 @limits(calls=3, period=1)  # 3 requests per second
 def rate_limited_quote(symbols):
-    return kite.quote(symbols)
+    try:
+        response = kite.quote(symbols)
+        logger.info("Rate limited quote response for symbols %s: %s", symbols, response)
+        return response
+    except Exception as e:
+        logger.error("Error in rate_limited_quote for symbols %s: %s", symbols, e)
+        return {}
 
 # Function to get the last Thursday of the month, adjusting for bank holidays
 def get_last_thursday_of_month(year, month):
@@ -164,6 +182,7 @@ def get_atm_option_contracts():
     # Get spot prices to determine ATM strikes
     try:
         indices = rate_limited_quote(["NSE:NIFTY 50", "NSE:NIFTY BANK"])
+        logger.info("Indices quote response for ATM strikes: %s", indices)
         nifty_spot = indices["NSE:NIFTY 50"].get("last_price", 0)
         banknifty_spot = indices["NSE:NIFTY BANK"].get("last_price", 0)
     except Exception as e:
@@ -190,7 +209,6 @@ def get_atm_option_contracts():
                 banknifty_put = instrument["tradingsymbol"]
 
     return nifty_call, nifty_put, banknifty_call, banknifty_put
-
 # Function to fetch option chain for Nifty and BankNifty
 def get_option_chain():
     # Fetch all instruments for NFO (futures and options)
@@ -202,7 +220,7 @@ def get_option_chain():
 
     # Define strike ranges (reduced to minimize API calls)
     nifty_strike_range = range(23000, 24001, 100)  # Narrowed range to reduce symbols
-    banknifty_strike_range = range(51000, 52001, 100)  # Narrowed range to reduce symbols
+    banknifty_strike_range = range(50000, 52001, 100)  # Narrowed range to reduce symbols
 
     # Collect option contracts
     nifty_options = {"calls": {}, "puts": {}}
@@ -238,6 +256,7 @@ def get_option_chain():
         batch = all_symbols[i:i + batch_size]
         try:
             batch_quotes = rate_limited_quote(batch)
+            logger.info("Option chain batch quote response: %s", batch_quotes)
             quotes.update(batch_quotes)
         except Exception as e:
             logger.error("Error fetching option chain quotes for batch: %s", e)
@@ -316,29 +335,36 @@ def get_futures_data():
     # Fetch futures data
     try:
         futures_data = rate_limited_quote([nifty_future_symbol, banknifty_future_symbol])
+        logger.info("Futures quote response: %s", futures_data)
         nifty_future = futures_data.get(nifty_future_symbol, {})
         banknifty_future = futures_data.get(banknifty_future_symbol, {})
+        # Fallback to current IST time if last_time is missing
+        nifty_timestamp = nifty_future.get("last_time", pendulum.now('Asia/Kolkata').strftime("%Y-%m-%d %H:%M:%S") if pendulum else datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        banknifty_timestamp = banknifty_future.get("last_time", pendulum.now('Asia/Kolkata').strftime("%Y-%m-%d %H:%M:%S") if pendulum else datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         return {
             "nifty_future": {
                 "ltp": nifty_future.get("last_price", "N/A"),
-                "timestamp": nifty_future.get("last_time", "Market Closed")
+                "timestamp": nifty_timestamp,
+                "vwap": nifty_future.get("vwap", "N/A")  # Fetch VWAP for Nifty futures
             },
             "banknifty_future": {
                 "ltp": banknifty_future.get("last_price", "N/A"),
-                "timestamp": banknifty_future.get("last_time", "Market Closed")
+                "timestamp": banknifty_timestamp,
+                "vwap": banknifty_future.get("vwap", "N/A")  # Fetch VWAP for BankNifty futures
             }
         }
     except Exception as e:
         logger.error("Error fetching futures data: %s", e)
         return {
-            "nifty_future": {"ltp": "N/A", "timestamp": "Market Closed"},
-            "banknifty_future": {"ltp": "N/A", "timestamp": "Market Closed"}
+            "nifty_future": {"ltp": "N/A", "timestamp": "Timestamp Unavailable", "vwap": "N/A"},
+            "banknifty_future": {"ltp": "N/A", "timestamp": "Timestamp Unavailable", "vwap": "N/A"}
         }
 
 # Function to fetch BankNifty constituent stocks' LTP, % change, and volume
 def get_bank_stocks_data():
     try:
         quotes = rate_limited_quote(BANKNIFTY_STOCKS)
+        logger.info("Bank stocks quote response: %s", quotes)
         bank_stocks = []
         for symbol in BANKNIFTY_STOCKS:
             stock_data = quotes.get(symbol, {})
@@ -373,13 +399,14 @@ def get_indices_data():
         # Fetch Indices data (Nifty 50, BankNifty, India VIX, Sensex, Nifty Midcap)
         indices_symbols = ["NSE:NIFTY 50", "NSE:NIFTY BANK", "NSE:INDIA VIX", "BSE:SENSEX", "NSE:NIFTY MIDCAP 50"]
         indices = rate_limited_quote(indices_symbols)
+        logger.info("Indices quote response: %s", indices)
         nifty = indices["NSE:NIFTY 50"]
         banknifty = indices["NSE:NIFTY BANK"]
         india_vix = indices["NSE:INDIA VIX"]
         sensex = indices["BSE:SENSEX"]
         nifty_midcap = indices["NSE:NIFTY MIDCAP 50"]
 
-        # Fetch futures data for Nifty and BankNifty
+        # Fetch futures data for Nifty and BankNifty (to get VWAP)
         futures = get_futures_data()
 
         # Fetch ATM OI data for Nifty and BankNifty
@@ -387,6 +414,7 @@ def get_indices_data():
         option_symbols = [f"NFO:{symbol}" for symbol in [nifty_call_symbol, nifty_put_symbol, banknifty_call_symbol, banknifty_put_symbol] if symbol]
         try:
             options_data = rate_limited_quote(option_symbols) if option_symbols else {}
+            logger.info("Options quote response: %s", options_data)
         except Exception as e:
             logger.error("Error fetching options data: %s", e)
             options_data = {}
@@ -397,31 +425,44 @@ def get_indices_data():
         # Fetch BankNifty constituent stocks data
         bank_stocks_gainers, bank_stocks_losers = get_bank_stocks_data()
 
+        # Fallback to current IST time if last_time is missing
+        nifty_timestamp = nifty.get("last_time", pendulum.now('Asia/Kolkata').strftime("%Y-%m-%d %H:%M:%S") if pendulum else datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        banknifty_timestamp = banknifty.get("last_time", pendulum.now('Asia/Kolkata').strftime("%Y-%m-%d %H:%M:%S") if pendulum else datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        india_vix_timestamp = india_vix.get("last_time", pendulum.now('Asia/Kolkata').strftime("%Y-%m-%d %H:%M:%S") if pendulum else datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        sensex_timestamp = sensex.get("last_time", pendulum.now('Asia/Kolkata').strftime("%Y-%m-%d %H:%M:%S") if pendulum else datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        nifty_midcap_timestamp = nifty_midcap.get("last_time", pendulum.now('Asia/Kolkata').strftime("%Y-%m-%d %H:%M:%S") if pendulum else datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+        # Use futures VWAP if index VWAP is not available
+        nifty_vwap = nifty.get("vwap", futures["nifty_future"].get("vwap", "N/A"))
+        banknifty_vwap = banknifty.get("vwap", futures["banknifty_future"].get("vwap", "N/A"))
+
         # Prepare the data dictionary
         data = {
+            "current_date_day": current_date_day,
+            "last_updated": last_updated,
             "nifty": {
                 "last_price": nifty.get("last_price", "N/A"),
-                "timestamp": nifty.get("last_time", "Market Closed"),
-                "vwap": nifty.get("vwap", "N/A")
+                "timestamp": nifty_timestamp,
+                "vwap": nifty_vwap
             },
             "banknifty": {
                 "last_price": banknifty.get("last_price", "N/A"),
-                "timestamp": banknifty.get("last_time", "Market Closed"),
-                "vwap": banknifty.get("vwap", "N/A")
+                "timestamp": banknifty_timestamp,
+                "vwap": banknifty_vwap
             },
             "india_vix": {
                 "last_price": india_vix.get("last_price", "N/A"),
-                "timestamp": india_vix.get("last_time", "Market Closed"),
+                "timestamp": india_vix_timestamp,
                 "vwap": "N/A"  # VWAP not applicable for India VIX
             },
             "sensex": {
                 "last_price": sensex.get("last_price", "N/A"),
-                "timestamp": sensex.get("last_time", "Market Closed"),
+                "timestamp": sensex_timestamp,
                 "vwap": "N/A"  # VWAP not applicable for Sensex
             },
             "nifty_midcap": {
                 "last_price": nifty_midcap.get("last_price", "N/A"),
-                "timestamp": nifty_midcap.get("last_time", "Market Closed"),
+                "timestamp": nifty_midcap_timestamp,
                 "vwap": "N/A"  # VWAP not applicable for Nifty Midcap
             },
             "futures": futures,
@@ -447,14 +488,42 @@ def get_indices_data():
 
 # Function to check if current time is within market hours
 def is_within_market_hours():
-    # Get current time in IST (Render uses UTC, so we adjust)
-    utc_now = datetime.datetime.now(datetime.timezone.utc)
-    ist_offset = datetime.timedelta(hours=5, minutes=30)
-    ist_now = utc_now + ist_offset
+    # Try using pendulum for more reliable time zone handling
+    if pendulum:
+        try:
+            ist_now = pendulum.now('Asia/Kolkata')
+            logger.info("Using pendulum - IST time: %s", ist_now)
+        except Exception as e:
+            logger.error("Error using pendulum: %s", e)
+            ist_now = None
+    else:
+        ist_now = None
 
-    # Log the calculated times for debugging
-    logger.info("UTC time: %s", utc_now)
-    logger.info("IST time: %s", ist_now)
+    # Fallback to datetime if pendulum is not available or fails
+    if not ist_now:
+        utc_now = datetime.datetime.now(datetime.timezone.utc)
+        ist_offset = datetime.timedelta(hours=5, minutes=30)
+        ist_now = utc_now + ist_offset
+        logger.info("Using datetime - UTC time: %s", utc_now)
+        logger.info("Using datetime - IST time: %s", ist_now)
+
+    # Fallback to worldtimeapi.org if both methods fail
+    if not ist_now or (ist_now.hour < 9 or ist_now.hour > 15):
+        if requests:
+            try:
+                response = requests.get("http://worldtimeapi.org/api/timezone/Asia/Kolkata")
+                response.raise_for_status()
+                time_data = response.json()
+                ist_now = pendulum.parse(time_data["datetime"])
+                logger.info("Using worldtimeapi - IST time: %s", ist_now)
+            except Exception as e:
+                logger.error("Error fetching time from worldtimeapi: %s", e)
+                # If all methods fail, fall back to datetime
+                utc_now = datetime.datetime.now(datetime.timezone.utc)
+                ist_offset = datetime.timedelta(hours=5, minutes=30)
+                ist_now = utc_now + ist_offset
+                logger.info("Fallback to datetime - UTC time: %s", utc_now)
+                logger.info("Fallback to datetime - IST time: %s", ist_now)
 
     # Get current day and time
     current_day = ist_now.weekday()  # 0 = Monday, 6 = Sunday
@@ -482,9 +551,19 @@ def update_app_status():
         app_active = is_within_market_hours()
 
         # Update timestamps
-        utc_now = datetime.datetime.now(datetime.timezone.utc)
-        ist_offset = datetime.timedelta(hours=5, minutes=30)
-        ist_now = utc_now + ist_offset
+        if pendulum:
+            try:
+                ist_now = pendulum.now('Asia/Kolkata')
+            except Exception as e:
+                logger.error("Error using pendulum in update_app_status: %s", e)
+                utc_now = datetime.datetime.now(datetime.timezone.utc)
+                ist_offset = datetime.timedelta(hours=5, minutes=30)
+                ist_now = utc_now + ist_offset
+        else:
+            utc_now = datetime.datetime.now(datetime.timezone.utc)
+            ist_offset = datetime.timedelta(hours=5, minutes=30)
+            ist_now = utc_now + ist_offset
+
         last_updated = ist_now.strftime("%Y-%m-%d %H:%M:%S IST")
         current_date_day = ist_now.strftime("%Y-%m-%d, %A")
 
@@ -510,7 +589,7 @@ def display_indices():
         return "App is outside market hours (9:15 AM to 3:30 PM IST, Monday to Friday).", 503
 
     # Prevent browser caching
-    response = Response(render_template('index.html', data=get_indices_data(), last_updated=last_updated, current_date_day=current_date_day))
+    response = Response(render_template('index.html', data=get_indices_data()))
     response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, post-check=0, pre-check=0, max-age=0'
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '-1'
