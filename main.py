@@ -307,6 +307,27 @@ def get_option_chain():
 
     return nifty_chain, banknifty_chain
 
+# Function to calculate VWAP from historical data
+def calculate_vwap(historical_data):
+    if not historical_data:
+        return "VWAP Unavailable"
+
+    total_price_volume = 0
+    total_volume = 0
+
+    for data_point in historical_data:
+        # Calculate typical price: (High + Low + Close) / 3
+        typical_price = (data_point["high"] + data_point["low"] + data_point["close"]) / 3
+        volume = data_point["volume"]
+        total_price_volume += typical_price * volume
+        total_volume += volume
+
+    if total_volume == 0:
+        return "VWAP Unavailable"
+
+    vwap = total_price_volume / total_volume
+    return round(vwap, 2)
+
 # Function to fetch Nifty and BankNifty futures data for the current month
 def get_futures_data():
     # Get the current month and year
@@ -332,32 +353,82 @@ def get_futures_data():
     nifty_future_symbol = f"NFO:NIFTY{expiry_str}FUT"
     banknifty_future_symbol = f"NFO:BANKNIFTY{expiry_str}FUT"
 
+    # Fetch instrument tokens for historical data
+    instruments = kite.instruments("NFO")
+    nifty_instrument_token = None
+    banknifty_instrument_token = None
+
+    for instrument in instruments:
+        if instrument["tradingsymbol"] == f"NIFTY{expiry_str}FUT":
+            nifty_instrument_token = instrument["instrument_token"]
+        if instrument["tradingsymbol"] == f"BANKNIFTY{expiry_str}FUT":
+            banknifty_instrument_token = instrument["instrument_token"]
+
     # Fetch futures data
     try:
         futures_data = rate_limited_quote([nifty_future_symbol, banknifty_future_symbol])
         logger.info("Futures quote response: %s", futures_data)
         nifty_future = futures_data.get(nifty_future_symbol, {})
         banknifty_future = futures_data.get(banknifty_future_symbol, {})
+
         # Fallback to current IST time if last_time is missing
         nifty_timestamp = nifty_future.get("last_time", pendulum.now('Asia/Kolkata').strftime("%Y-%m-%d %H:%M:%S") if pendulum else datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         banknifty_timestamp = banknifty_future.get("last_time", pendulum.now('Asia/Kolkata').strftime("%Y-%m-%d %H:%M:%S") if pendulum else datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+        # Fetch historical data to calculate VWAP
+        # Define the time range: from market open (9:15 AM IST) to current time
+        now = datetime.datetime.now()
+        market_open = now.replace(hour=9, minute=15, second=0, microsecond=0)
+        if now < market_open:
+            market_open = market_open - datetime.timedelta(days=1)  # Use previous day's open if before 9:15 AM
+
+        # Fetch 1-minute historical data for Nifty futures
+        nifty_vwap = "VWAP Unavailable"
+        if nifty_instrument_token:
+            try:
+                historical_data = kite.historical_data(
+                    instrument_token=nifty_instrument_token,
+                    from_date=market_open,
+                    to_date=now,
+                    interval="minute"
+                )
+                logger.info("Nifty futures historical data: %s", historical_data)
+                nifty_vwap = calculate_vwap(historical_data)
+            except Exception as e:
+                logger.error("Error fetching historical data for Nifty futures: %s", e)
+
+        # Fetch 1-minute historical data for BankNifty futures
+        banknifty_vwap = "VWAP Unavailable"
+        if banknifty_instrument_token:
+            try:
+                historical_data = kite.historical_data(
+                    instrument_token=banknifty_instrument_token,
+                    from_date=market_open,
+                    to_date=now,
+                    interval="minute"
+                )
+                logger.info("BankNifty futures historical data: %s", historical_data)
+                banknifty_vwap = calculate_vwap(historical_data)
+            except Exception as e:
+                logger.error("Error fetching historical data for BankNifty futures: %s", e)
+
         return {
             "nifty_future": {
                 "ltp": nifty_future.get("last_price", "N/A"),
                 "timestamp": nifty_timestamp,
-                "vwap": nifty_future.get("vwap", "N/A")  # Fetch VWAP for Nifty futures
+                "vwap": nifty_vwap
             },
             "banknifty_future": {
                 "ltp": banknifty_future.get("last_price", "N/A"),
                 "timestamp": banknifty_timestamp,
-                "vwap": banknifty_future.get("vwap", "N/A")  # Fetch VWAP for BankNifty futures
+                "vwap": banknifty_vwap
             }
         }
     except Exception as e:
         logger.error("Error fetching futures data: %s", e)
         return {
-            "nifty_future": {"ltp": "N/A", "timestamp": "Timestamp Unavailable", "vwap": "N/A"},
-            "banknifty_future": {"ltp": "N/A", "timestamp": "Timestamp Unavailable", "vwap": "N/A"}
+            "nifty_future": {"ltp": "N/A", "timestamp": "Timestamp Unavailable", "vwap": "VWAP Unavailable"},
+            "banknifty_future": {"ltp": "N/A", "timestamp": "Timestamp Unavailable", "vwap": "VWAP Unavailable"}
         }
 
 # Function to fetch BankNifty constituent stocks' LTP, % change, and volume
@@ -432,9 +503,9 @@ def get_indices_data():
         sensex_timestamp = sensex.get("last_time", pendulum.now('Asia/Kolkata').strftime("%Y-%m-%d %H:%M:%S") if pendulum else datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         nifty_midcap_timestamp = nifty_midcap.get("last_time", pendulum.now('Asia/Kolkata').strftime("%Y-%m-%d %H:%M:%S") if pendulum else datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
-        # Use futures VWAP if index VWAP is not available
-        nifty_vwap = nifty.get("vwap", futures["nifty_future"].get("vwap", "N/A"))
-        banknifty_vwap = banknifty.get("vwap", futures["banknifty_future"].get("vwap", "N/A"))
+        # Use futures VWAP (calculated manually)
+        nifty_vwap = futures["nifty_future"].get("vwap", "VWAP Unavailable")
+        banknifty_vwap = futures["banknifty_future"].get("vwap", "VWAP Unavailable")
 
         # Prepare the data dictionary
         data = {
